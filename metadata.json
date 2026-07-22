@@ -1,0 +1,6 @@
+{
+  "name": "POS Híbrido",
+  "description": "Sistema POS Híbrido Offline (B2B2E) v7.1 con DRM y sincronización P2P",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
