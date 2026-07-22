@@ -8,12 +8,16 @@ import com.example.data.dao.ConfigDao
 import com.example.data.dao.EmployeeDao
 import com.example.data.dao.ExpenseDao
 import com.example.data.dao.ProductDao
+import com.example.data.dao.SaleDao
 import com.example.data.dao.ShiftDao
 import com.example.data.dao.TransactionDao
 import com.example.data.entity.ConfigEntity
 import com.example.data.entity.EmployeeEntity
 import com.example.data.entity.ExpenseEntity
 import com.example.data.entity.ProductEntity
+import com.example.data.entity.SaleEntity
+import com.example.data.entity.SaleItemEntity
+import com.example.data.entity.SalePaymentEntity
 import com.example.data.entity.ShiftEntity
 import com.example.data.entity.TransactionEntity
 
@@ -24,9 +28,12 @@ import com.example.data.entity.TransactionEntity
         ShiftEntity::class,
         TransactionEntity::class,
         ExpenseEntity::class,
-        EmployeeEntity::class
+        EmployeeEntity::class,
+        SaleEntity::class,
+        SaleItemEntity::class,
+        SalePaymentEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun expenseDao(): ExpenseDao
     abstract fun employeeDao(): EmployeeDao
+    abstract fun saleDao(): SaleDao
 
     companion object {
         @Volatile

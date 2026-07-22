@@ -7,6 +7,9 @@ import java.util.UUID
 @Entity(tableName = "config")
 data class ConfigEntity(
     @PrimaryKey val device_id: String = UUID.randomUUID().toString(),
+    val device_uuid: String = UUID.randomUUID().toString(),
+    val android_id: String = "",
+    val public_qr: String = UUID.randomUUID().toString(),
     val active_mode: String = "SOLO_OWNER",
     val active_plan: String = "PARTICULAR",
     val is_licensed: Boolean = false,
@@ -34,6 +37,7 @@ data class ProductEntity(
 data class ShiftEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val worker_name: String = "",
+    val initial_cash: Double = 0.0,
     val start_time: Long = System.currentTimeMillis(),
     val end_time: Long? = null,
     val declared_cash: Double = 0.0,
@@ -44,13 +48,41 @@ data class ShiftEntity(
     val status: String = "OPEN"
 )
 
+@Entity(tableName = "sales")
+data class SaleEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val shift_id: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val total_amount: Double,
+    val status: String = "COMPLETED" // COMPLETED, VOIDED
+)
+
+@Entity(tableName = "sale_items")
+data class SaleItemEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val sale_id: String,
+    val product_id: String,
+    val product_name: String,
+    val quantity: Double,
+    val unit_price: Double,
+    val subtotal: Double
+)
+
+@Entity(tableName = "sale_payments")
+data class SalePaymentEntity(
+    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+    val sale_id: String,
+    val payment_method: String, // CASH, TRANSFER
+    val amount: Double
+)
+
 @Entity(tableName = "transactions")
 data class TransactionEntity(
     @PrimaryKey val id: String = UUID.randomUUID().toString(),
     val shift_id: String,
     val product_id: String,
     val product_name: String = "",
-    val type: String = "SALE",
+    val type: String = "SALE", // SALE, STOCK_ENTRY, STOCK_LOSS
     val quantity: Double,
     val unit_price: Double,
     val payment_method: String = "CASH",
@@ -75,3 +107,4 @@ data class EmployeeEntity(
     val commission_rate: Double = 0.0,
     val assigned_inventory: String = "[]" // JSON array string
 )
+

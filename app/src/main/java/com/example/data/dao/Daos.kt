@@ -14,6 +14,37 @@ import com.example.data.entity.ShiftEntity
 import com.example.data.entity.TransactionEntity
 import kotlinx.coroutines.flow.Flow
 
+import com.example.data.entity.SaleEntity
+import com.example.data.entity.SaleItemEntity
+import com.example.data.entity.SalePaymentEntity
+
+@Dao
+interface SaleDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSale(sale: SaleEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSaleItems(items: List<SaleItemEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSalePayments(payments: List<SalePaymentEntity>)
+
+    @Query("SELECT * FROM sales WHERE shift_id = :shiftId ORDER BY timestamp DESC")
+    fun getSalesForShiftFlow(shiftId: String): Flow<List<SaleEntity>>
+
+    @Query("SELECT * FROM sales ORDER BY timestamp DESC")
+    fun getAllSalesFlow(): Flow<List<SaleEntity>>
+
+    @Query("SELECT * FROM sale_items WHERE sale_id = :saleId")
+    suspend fun getSaleItems(saleId: String): List<SaleItemEntity>
+
+    @Query("SELECT * FROM sale_payments WHERE sale_id = :saleId")
+    suspend fun getSalePayments(saleId: String): List<SalePaymentEntity>
+
+    @Query("UPDATE sales SET status = 'VOIDED' WHERE id = :saleId")
+    suspend fun voidSale(saleId: String)
+}
+
 @Dao
 interface ConfigDao {
     @Query("SELECT * FROM config LIMIT 1")

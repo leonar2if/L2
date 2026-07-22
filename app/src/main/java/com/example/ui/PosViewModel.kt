@@ -19,7 +19,9 @@ import com.example.data.enums.OperationMode
 import com.example.data.enums.ShiftStatus
 import com.example.data.enums.UserPlan
 import com.example.data.enums.UserRole
+import com.example.data.repository.PaymentSplit
 import com.example.data.repository.PosRepository
+import com.example.data.repository.SaleCartItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -111,6 +113,9 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 val androidId = getAndroidId()
                 val newConfig = ConfigEntity(
                     device_id = androidId,
+                    device_uuid = UUID.randomUUID().toString(),
+                    android_id = androidId,
+                    public_qr = UUID.randomUUID().toString(),
                     active_mode = "UNCONFIGURED",
                     active_plan = "UNCONFIGURED",
                     is_licensed = false,
@@ -127,9 +132,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             if (products.isEmpty()) {
                 seedInitialDemoProducts()
             }
-
-            // Ensure an open shift exists if configured
-            ensureOpenShift()
         }
 
         // Collect current shift items
@@ -194,10 +196,12 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun ensureOpenShift() {
-        val cfg = repository.getConfig()
-        if (cfg != null && cfg.is_licensed) {
-            repository.getOrCreateOpenShift(cfg.worker_name)
+    // Explicitly Start Shift (Iniciar Día)
+    fun startShift(initialCash: Double) {
+        viewModelScope.launch {
+            val cfg = repository.getConfig()
+            repository.startShift(cfg?.worker_name ?: "Usuario", initialCash)
+            showToast("Día iniciado con $${"%.2f".format(initialCash)} en caja")
         }
     }
 
@@ -214,9 +218,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 show_stock_tab = (role != UserRole.INDEPENDENT_WORKER)
             )
             repository.saveConfig(updated)
-            if (isFreeLinked) {
-                ensureOpenShift()
-            }
         }
     }
 
@@ -237,7 +238,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 val updated = cfg.copy(is_licensed = true)
                 repository.saveConfig(updated)
-                ensureOpenShift()
                 showToast("¡Licencia activada con éxito!")
             }
             return true
@@ -258,15 +258,30 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 sync_boss_uuid = bossUuid
             )
             repository.saveConfig(updated)
-            ensureOpenShift()
             showToast("Vinculado correctamente al jefe UUID: $bossUuid")
         }
     }
 
     // Sales Execution
+    fun registerMultiItemSale(items: List<SaleCartItem>, payments: List<PaymentSplit>) {
+        viewModelScope.launch {
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar una venta")
+                return@launch
+            }
+            repository.recordMultiItemSale(shift.id, items, payments)
+            showToast("Venta de ${items.size} producto(s) registrada")
+        }
+    }
+
     fun registerSale(productId: String, productName: String, quantity: Double, unitPrice: Double, paymentMethod: String) {
         viewModelScope.launch {
-            val shift = repository.getOrCreateOpenShift(configState.value?.worker_name ?: "Usuario")
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar una venta")
+                return@launch
+            }
             repository.recordSale(
                 shiftId = shift.id,
                 productId = productId,
@@ -275,12 +290,7 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 unitPrice = unitPrice,
                 paymentMethod = paymentMethod
             )
-            val cfg = configState.value
-            if (cfg?.show_stock_tab == true) {
-                showToast("Venta registrada")
-            } else {
-                showToast("Venta registrada")
-            }
+            showToast("Venta registrada")
         }
     }
 
@@ -289,11 +299,17 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val cfg = configState.value
             val canCreate = when (cfg?.active_mode) {
-                UserRole.LINKED_WORKER.name -> cfg.show_stock_tab // Check employee config
+                UserRole.LINKED_WORKER.name -> cfg.show_stock_tab
                 else -> true
             }
             if (!canCreate && cfg?.active_mode == UserRole.LINKED_WORKER.name) {
                 showToast("No tienes permiso para agregar productos nuevos")
+                return@launch
+            }
+
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar una venta")
                 return@launch
             }
 
@@ -306,20 +322,16 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             )
             repository.insertProduct(newProd)
 
-            val shift = repository.getOrCreateOpenShift(cfg?.worker_name ?: "Usuario")
             repository.recordSale(
                 shiftId = shift.id,
                 productId = newProd.id,
                 productName = newProd.name,
-                quantity = 1.0, unitPrice = salePrice,
+                quantity = 1.0,
+                unitPrice = salePrice,
                 paymentMethod = paymentMethod
             )
 
-            if (cfg?.show_stock_tab == true) {
-                showToast("Completa el stock en la pestaña Stock")
-            } else {
-                showToast("Producto '$name' creado y vendido")
-            }
+            showToast("Producto '$name' creado y vendido")
         }
     }
 
@@ -333,7 +345,11 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
     // Expenses
     fun addExpense(description: String, amount: Double) {
         viewModelScope.launch {
-            val shift = repository.getOrCreateOpenShift(configState.value?.worker_name ?: "Usuario")
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar un egreso")
+                return@launch
+            }
             repository.addExpense(shift.id, description, amount)
             showToast("Egreso registrado")
         }
@@ -361,7 +377,11 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     fun recordStockEntry(product: ProductEntity, quantity: Double) {
         viewModelScope.launch {
-            val shift = repository.getOrCreateOpenShift(configState.value?.worker_name ?: "Usuario")
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar un movimiento de stock")
+                return@launch
+            }
             repository.recordStockMovement(shift.id, product.id, product.name, "STOCK_ENTRY", quantity)
             showToast("Entrada de stock registrada")
         }
@@ -369,7 +389,11 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
 
     fun recordStockLoss(product: ProductEntity, quantity: Double) {
         viewModelScope.launch {
-            val shift = repository.getOrCreateOpenShift(configState.value?.worker_name ?: "Usuario")
+            val shift = repository.getCurrentOpenShift()
+            if (shift == null) {
+                showToast("Debes iniciar el día antes de registrar un movimiento de stock")
+                return@launch
+            }
             repository.recordStockMovement(shift.id, product.id, product.name, "STOCK_LOSS", quantity)
             showToast("Baja de stock registrada")
         }
@@ -424,8 +448,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
             )
 
             repository.closeShift(closedShift)
-            // Re-open new shift
-            repository.getOrCreateOpenShift(cfg?.worker_name ?: "Usuario")
             showToast("Turno cerrado guardado en historial")
         }
     }
@@ -473,7 +495,6 @@ class PosViewModel(application: Application) : AndroidViewModel(application) {
                 status = "CLOSED"
             )
             repository.closeShift(closedShift)
-            repository.getOrCreateOpenShift(cfg.worker_name)
         }
 
         // Save to cache file for sharing

@@ -276,13 +276,17 @@ fun MainPosScreen(
                         if (cfg.operation_system == OperationMode.SALES_COUNT.name) {
                             if (activeSubTab == 0 || !cfg.show_stock_tab) {
                                 CajaScreen(
+                                    currentShift = shift,
                                     products = products,
                                     transactions = transactions,
                                     canCreateProducts = canCreateProducts,
                                     commissionRate = cfg.commission_rate,
                                     showCommission = isIndependentWorker,
-                                    onSaleRecorded = { product, qty, method ->
-                                        viewModel.registerSale(product.id, product.name, qty, product.sale_price, method)
+                                    onStartShiftClick = { initialCash ->
+                                        viewModel.startShift(initialCash)
+                                    },
+                                    onMultiSaleRecorded = { items, payments ->
+                                        viewModel.registerMultiItemSale(items, payments)
                                     },
                                     onAddNewProductAndSell = { name, price, method ->
                                         viewModel.addProductAndRecordSale(name, price, method)

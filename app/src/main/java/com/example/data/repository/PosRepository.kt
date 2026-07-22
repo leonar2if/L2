@@ -12,6 +12,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+import com.example.data.entity.SaleEntity
+import com.example.data.entity.SaleItemEntity
+import com.example.data.entity.SalePaymentEntity
+
+data class SaleCartItem(
+    val product: ProductEntity,
+    val quantity: Double,
+    val unitPrice: Double
+)
+
+data class PaymentSplit(
+    val method: String, // CASH, TRANSFER
+    val amount: Double
+)
+
 class PosRepository(private val db: AppDatabase) {
 
     // Config
@@ -43,13 +58,18 @@ class PosRepository(private val db: AppDatabase) {
     val currentOpenShiftFlow: Flow<ShiftEntity?> = db.shiftDao().getCurrentOpenShiftFlow()
     val allShiftsFlow: Flow<List<ShiftEntity>> = db.shiftDao().getAllShiftsFlow()
 
-    suspend fun getOrCreateOpenShift(workerName: String): ShiftEntity {
+    suspend fun getCurrentOpenShift(): ShiftEntity? {
+        return db.shiftDao().getCurrentOpenShift()
+    }
+
+    suspend fun startShift(workerName: String, initialCash: Double): ShiftEntity {
         val openShift = db.shiftDao().getCurrentOpenShift()
         if (openShift != null) return openShift
 
         val newShift = ShiftEntity(
             id = UUID.randomUUID().toString(),
             worker_name = workerName,
+            initial_cash = initialCash,
             start_time = System.currentTimeMillis(),
             status = "OPEN"
         )
@@ -61,11 +81,79 @@ class PosRepository(private val db: AppDatabase) {
         db.shiftDao().updateShift(shift)
     }
 
-    // Transactions
+    // Transactions & Sales
     fun getTransactionsForShift(shiftId: String): Flow<List<TransactionEntity>> =
         db.transactionDao().getTransactionsForShiftFlow(shiftId)
 
     val allTransactionsFlow: Flow<List<TransactionEntity>> = db.transactionDao().getAllTransactionsFlow()
+
+    suspend fun recordMultiItemSale(
+        shiftId: String,
+        items: List<SaleCartItem>,
+        payments: List<PaymentSplit>
+    ) {
+        val totalSaleAmount = items.sumOf { it.quantity * it.unitPrice }
+        val saleId = UUID.randomUUID().toString()
+
+        val saleEntity = SaleEntity(
+            id = saleId,
+            shift_id = shiftId,
+            timestamp = System.currentTimeMillis(),
+            total_amount = totalSaleAmount,
+            status = "COMPLETED"
+        )
+        db.saleDao().insertSale(saleEntity)
+
+        val saleItems = items.map { cart ->
+            SaleItemEntity(
+                id = UUID.randomUUID().toString(),
+                sale_id = saleId,
+                product_id = cart.product.id,
+                product_name = cart.product.name,
+                quantity = cart.quantity,
+                unit_price = cart.unitPrice,
+                subtotal = cart.quantity * cart.unitPrice
+            )
+        }
+        db.saleDao().insertSaleItems(saleItems)
+
+        val salePayments = payments.map { pay ->
+            SalePaymentEntity(
+                id = UUID.randomUUID().toString(),
+                sale_id = saleId,
+                payment_method = pay.method,
+                amount = pay.amount
+            )
+        }
+        db.saleDao().insertSalePayments(salePayments)
+
+        // Primary payment method for log display
+        val primaryPaymentMethod = payments.firstOrNull()?.method ?: "CASH"
+
+        // Update Stock & Ranking for sold products, insert Transaction logs
+        for (item in items) {
+            val prod = db.productDao().getProductById(item.product.id) ?: item.product
+            val newStock = (prod.current_stock - item.quantity).coerceAtLeast(0.0)
+            val updated = prod.copy(
+                current_stock = newStock,
+                sales_ranking_score = prod.sales_ranking_score + item.quantity.toInt()
+            )
+            db.productDao().updateProduct(updated)
+
+            val tx = TransactionEntity(
+                id = UUID.randomUUID().toString(),
+                shift_id = shiftId,
+                product_id = item.product.id,
+                product_name = item.product.name,
+                type = "SALE",
+                quantity = item.quantity,
+                unit_price = item.unitPrice,
+                payment_method = primaryPaymentMethod,
+                timestamp = System.currentTimeMillis()
+            )
+            db.transactionDao().insertTransaction(tx)
+        }
+    }
 
     suspend fun recordSale(
         shiftId: String,
@@ -75,28 +163,11 @@ class PosRepository(private val db: AppDatabase) {
         unitPrice: Double,
         paymentMethod: String
     ) {
-        val transaction = TransactionEntity(
-            id = UUID.randomUUID().toString(),
-            shift_id = shiftId,
-            product_id = productId,
-            product_name = productName,
-            type = "SALE",
-            quantity = quantity,
-            unit_price = unitPrice,
-            payment_method = paymentMethod,
-            timestamp = System.currentTimeMillis()
-        )
-        db.transactionDao().insertTransaction(transaction)
-
-        // Update product stock and ranking
-        val product = db.productDao().getProductById(productId)
-        if (product != null) {
-            val newStock = (product.current_stock - quantity).coerceAtLeast(0.0)
-            val updated = product.copy(
-                current_stock = newStock,
-                sales_ranking_score = product.sales_ranking_score + quantity.toInt()
-            )
-            db.productDao().updateProduct(updated)
+        val prod = db.productDao().getProductById(productId)
+        if (prod != null) {
+            val cartItem = SaleCartItem(product = prod, quantity = quantity, unitPrice = unitPrice)
+            val payment = PaymentSplit(method = paymentMethod, amount = quantity * unitPrice)
+            recordMultiItemSale(shiftId, listOf(cartItem), listOf(payment))
         }
     }
 
